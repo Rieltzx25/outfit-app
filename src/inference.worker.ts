@@ -5,14 +5,13 @@
 import * as ort from 'onnxruntime-web'
 import { OUTFIT_LABELS } from './classes'
 
-// Point ORT at jsdelivr for its supporting wasm + pthread worker files. Vite bundles
-// the .wasm itself but NOT the pthread worker JS — without this redirect ORT tries
-// to load our own inference.worker.js as a pthread worker and recurses, blocking
-// model init forever.
-ort.env.wasm.wasmPaths = 'https://cdn.jsdelivr.net/npm/onnxruntime-web@1.25.1/dist/'
-// Single-thread to avoid the cross-origin / pthread worker setup. Expression-app
-// runs the same way and is fine for the workload sizes we have here.
-ort.env.wasm.numThreads = 1
+// ORT needs both .wasm and the paired .mjs (pthread loader) at one URL prefix.
+// We mirror onnxruntime-web/dist into public/ort/ at build time (see vite.config.ts)
+// so they're same-origin — necessary because COOP/COEP=require-corp would block
+// jsdelivr otherwise. Same-origin + COOP/COEP unlocks SharedArrayBuffer, which
+// unlocks multi-thread WASM.
+ort.env.wasm.wasmPaths = '/ort/'
+ort.env.wasm.numThreads = Math.min(4, (typeof navigator !== 'undefined' && navigator.hardwareConcurrency) || 1)
 
 let mainSession: ort.InferenceSession | null = null
 let specialistSession: ort.InferenceSession | null = null

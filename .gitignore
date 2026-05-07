@@ -24,3 +24,6 @@ dist-ssr
 *.sw?
 
 .vercel
+
+# Auto-copied ORT runtime (see vite.config.ts copyOrtRuntime plugin)
+/public/ort
