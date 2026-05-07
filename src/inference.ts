@@ -32,6 +32,10 @@ function ensureWorker(): Worker {
       entry.resolve(undefined)
     } else if (data.type === 'detected') {
       ACTIVE_BACKEND = data.backend
+      if (data.breakdown) {
+        const b = data.breakdown as { letterbox: number; main_run: number; post: number; total: number }
+        console.log(`[detect] letterbox=${b.letterbox.toFixed(1)} main_run=${b.main_run.toFixed(1)} post=${b.post.toFixed(1)} total=${b.total.toFixed(1)} ms`)
+      }
       pending.delete(data.id)
       entry.resolve(data.boxes)
     } else if (data.type === 'error') {

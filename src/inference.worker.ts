@@ -1,7 +1,7 @@
 /// <reference lib="webworker" />
-// Use the standard onnxruntime-web build (multi-threaded WASM). The /webgpu sub-entry
-// bundles only the asyncify wasm which doesn't work for the plain WASM execution
-// provider — and on the laptops we care about WebGPU init was hanging anyway.
+// Standard onnxruntime-web entry — uses jsep multi-threaded WASM, fastest for our
+// hardware. We tried /webgpu earlier but the user's laptop GPU couldn't init
+// WebGPU (timed out) and the asyncify WASM is ~13% slower than jsep, so net loss.
 import * as ort from 'onnxruntime-web'
 import { OUTFIT_LABELS } from './classes'
 
@@ -11,12 +11,19 @@ import { OUTFIT_LABELS } from './classes'
 // jsdelivr otherwise. Same-origin + COOP/COEP unlocks SharedArrayBuffer, which
 // unlocks multi-thread WASM.
 ort.env.wasm.wasmPaths = '/ort/'
-ort.env.wasm.numThreads = Math.min(4, (typeof navigator !== 'undefined' && navigator.hardwareConcurrency) || 1)
+// More threads = lower latency until we hit physical core count. 8 is safe on
+// any laptop with >=8 logical cores; user has 24.
+ort.env.wasm.numThreads = Math.min(8, (typeof navigator !== 'undefined' && navigator.hardwareConcurrency) || 1)
+// SIMD is auto-detected but explicit for clarity.
+ort.env.wasm.simd = true
 
 let mainSession: ort.InferenceSession | null = null
 let specialistSession: ort.InferenceSession | null = null
 let activeBackend: 'webgpu' | 'wasm' = 'wasm'
 
+// FP32 weights. Tried FP16 — file is half the size but WASM SIMD has no native
+// FP16 ops, so runtime latency is unchanged (sometimes slightly worse due to
+// cast overhead). Keep FP32 since speed beats download size for repeat users.
 const MAIN_URL = '/models/outfit-v4-35cls-yolov8s.onnx'
 const SPECIALIST_URL = '/models/shoe-specialist-v1.onnx'
 const MAIN_BYTES = 45_000_000
@@ -31,7 +38,7 @@ const TANKTOP_IDX = 2
 const TSHIRT_IDX = 1
 const FOOTWEAR_CLASSES = new Set([SHOE_IDX, HEELS_IDX, SANDAL_IDX, BOOT_IDX])
 
-const CACHE_NAME = 'outfit-models-v4'
+const CACHE_NAME = 'outfit-models-v7-fp32-final'
 
 async function getOrFetchModel(url: string, expectedBytes: number, onPct: (pct: number) => void): Promise<ArrayBuffer> {
   try {
@@ -90,6 +97,10 @@ async function loadModel(post: (msg: string, pct?: number) => void) {
     return await ort.InferenceSession.create(buf, {
       executionProviders: ['wasm'],
       graphOptimizationLevel: 'all',
+      executionMode: 'parallel',
+      enableCpuMemArena: true,
+      enableMemPattern: true,
+      freeDimensionOverrides: { batch: 1 },
     })
   }
 
@@ -164,13 +175,20 @@ function decode(out: Record<string, ort.Tensor>, r: number, padX: number, padY: 
   return nms(candidates, NMS_IOU)
 }
 
+// Profile flag — set true to log step timings to console. Off by default in prod.
+let profile = false
+function tick(): number { return performance.now() }
+
 async function detect(bitmap: ImageBitmap, srcW: number, srcH: number, conf: number): Promise<Box[]> {
   if (!mainSession || !specialistSession) throw new Error('Models not loaded')
 
+  const t0 = tick()
   const { tensor, r, padX, padY } = letterbox(bitmap, srcW, srcH)
   bitmap.close()
+  const t1 = tick()
 
   const mainOut = await mainSession.run({ images: tensor })
+  const t2 = tick()
   const mainBoxes = decode(mainOut, r, padX, padY, OUTFIT_LABELS.length, 0, conf)
 
   const mainHasFootwear = mainBoxes.some(b => FOOTWEAR_CLASSES.has(b.cls))
@@ -210,8 +228,15 @@ async function detect(bitmap: ImageBitmap, srcW: number, srcH: number, conf: num
   }
 
   const dedup = nms(finalBoxes, 0.6)
+  const t3 = tick()
+  lastBreakdown = { letterbox: t1-t0, main_run: t2-t1, post: t3-t2, total: t3-t0 }
+  if (profile) {
+    console.log(`[detect] letterbox=${(t1-t0).toFixed(1)}ms main_run=${(t2-t1).toFixed(1)}ms post=${(t3-t2).toFixed(1)}ms total=${(t3-t0).toFixed(1)}ms`)
+  }
   return [...dedup, ...specBoxes]
 }
+
+let lastBreakdown: { letterbox: number; main_run: number; post: number; total: number } | null = null
 
 function iou(a: Box, b: Box): number {
   const x1 = Math.max(a.x1, b.x1), y1 = Math.max(a.y1, b.y1)
@@ -239,6 +264,7 @@ function nms(boxes: Box[], thr: number): Box[] {
 type InMsg =
   | { type: 'load'; id: number }
   | { type: 'detect'; id: number; bitmap: ImageBitmap; srcW: number; srcH: number; conf: number }
+  | { type: 'profile'; id: number; on: boolean }
 
 self.onmessage = async (ev: MessageEvent<InMsg>) => {
   const msg = ev.data
@@ -248,7 +274,10 @@ self.onmessage = async (ev: MessageEvent<InMsg>) => {
       self.postMessage({ type: 'loaded', id: msg.id, backend: activeBackend })
     } else if (msg.type === 'detect') {
       const boxes = await detect(msg.bitmap, msg.srcW, msg.srcH, msg.conf)
-      self.postMessage({ type: 'detected', id: msg.id, boxes, backend: activeBackend })
+      self.postMessage({ type: 'detected', id: msg.id, boxes, backend: activeBackend, breakdown: lastBreakdown })
+    } else if (msg.type === 'profile') {
+      profile = msg.on
+      self.postMessage({ type: 'loaded', id: msg.id, backend: activeBackend })
     }
   } catch (e) {
     self.postMessage({ type: 'error', id: msg.id, message: e instanceof Error ? e.message : String(e) })

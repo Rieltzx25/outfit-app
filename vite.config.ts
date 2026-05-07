@@ -13,6 +13,8 @@ const __dirname = dirname(fileURLToPath(import.meta.url))
 const ORT_FILES = [
   'ort-wasm-simd-threaded.jsep.wasm',
   'ort-wasm-simd-threaded.jsep.mjs',
+  'ort-wasm-simd-threaded.asyncify.wasm',
+  'ort-wasm-simd-threaded.asyncify.mjs',
   'ort-wasm-simd-threaded.wasm',
   'ort-wasm-simd-threaded.mjs',
 ]
