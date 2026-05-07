@@ -1,9 +1,18 @@
 /// <reference lib="webworker" />
-import * as ort from 'onnxruntime-web/webgpu'
+// Use the standard onnxruntime-web build (multi-threaded WASM). The /webgpu sub-entry
+// bundles only the asyncify wasm which doesn't work for the plain WASM execution
+// provider — and on the laptops we care about WebGPU init was hanging anyway.
+import * as ort from 'onnxruntime-web'
 import { OUTFIT_LABELS } from './classes'
 
-// Multi-threaded WASM (only effective when COOP/COEP headers are set so SharedArrayBuffer is available).
-ort.env.wasm.numThreads = Math.min(4, (typeof navigator !== 'undefined' && navigator.hardwareConcurrency) || 1)
+// Point ORT at jsdelivr for its supporting wasm + pthread worker files. Vite bundles
+// the .wasm itself but NOT the pthread worker JS — without this redirect ORT tries
+// to load our own inference.worker.js as a pthread worker and recurses, blocking
+// model init forever.
+ort.env.wasm.wasmPaths = 'https://cdn.jsdelivr.net/npm/onnxruntime-web@1.25.1/dist/'
+// Single-thread to avoid the cross-origin / pthread worker setup. Expression-app
+// runs the same way and is fine for the workload sizes we have here.
+ort.env.wasm.numThreads = 1
 
 let mainSession: ort.InferenceSession | null = null
 let specialistSession: ort.InferenceSession | null = null
@@ -65,8 +74,6 @@ async function loadModel(post: (msg: string, pct?: number) => void) {
   if (mainSession && specialistSession) { post('ready', 100); return }
   post('checking cache…', 0)
 
-  const hasWebGPU = typeof navigator !== 'undefined' && 'gpu' in navigator
-
   let mainPct = 0, specPct = 0
   const updateOverall = () => {
     const overall = Math.round(((mainPct * MAIN_BYTES) + (specPct * SPECIALIST_BYTES)) / TOTAL_BYTES)
@@ -79,38 +86,17 @@ async function loadModel(post: (msg: string, pct?: number) => void) {
     getOrFetchModel(SPECIALIST_URL, SPECIALIST_BYTES, p => { specPct = p; updateOverall() }),
   ])
 
-  // WebGPU init can hang silently on some Chrome+laptop combos (driver/iGPU issues).
-  // Race it against a 4s timeout so we don't deadlock the loader; fall back to WASM.
-  const WEBGPU_INIT_TIMEOUT_MS = 4000
-
-  const tryCreate = async (buf: ArrayBuffer, label: string) => {
-    if (hasWebGPU && activeBackend !== 'wasm') {
-      try {
-        post(`initializing ${label} (webgpu)…`, 99)
-        const create = ort.InferenceSession.create(buf, {
-          executionProviders: ['webgpu'],
-          graphOptimizationLevel: 'all',
-        })
-        const timeout = new Promise<never>((_, rej) => setTimeout(() => rej(new Error('webgpu init timeout')), WEBGPU_INIT_TIMEOUT_MS))
-        const s = await Promise.race([create, timeout])
-        activeBackend = 'webgpu'
-        return s
-      } catch (e) {
-        console.warn(`webgpu init failed/timeout for ${label}, falling back to wasm:`, e)
-        // Lock to WASM for the rest of this load so we don't time out twice on the second model.
-        activeBackend = 'wasm'
-      }
-    }
+  const create = async (buf: ArrayBuffer, label: string) => {
     post(`initializing ${label} (wasm)…`, 99)
-    activeBackend = 'wasm'
     return await ort.InferenceSession.create(buf, {
       executionProviders: ['wasm'],
       graphOptimizationLevel: 'all',
     })
   }
 
-  mainSession = await tryCreate(mainBuf, 'main model')
-  specialistSession = await tryCreate(specBuf, 'shoe specialist')
+  activeBackend = 'wasm'
+  mainSession = await create(mainBuf, 'main model')
+  specialistSession = await create(specBuf, 'shoe specialist')
   post('ready', 100)
 }
 
