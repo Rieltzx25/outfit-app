@@ -1,73 +1,39 @@
-# React + TypeScript + Vite
+# outfit detector
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+Real-time clothing detection running fully in your browser. Point your webcam, paste a photo, or upload one — bounding boxes are drawn locally, no frames leave your device.
 
-Currently, two official plugins are available:
+🔗 **[outfit-detection-deploy-jade.vercel.app](https://outfit-detection-deploy-jade.vercel.app)**
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
+## what it does
 
-## React Compiler
+35-class YOLOv8s detector for clothing items (tops, outerwear, bottoms, footwear, etc.) plus a separate shoe specialist that overrides the main model on footwear regions for better accuracy.
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
+Runs entirely in-browser via ONNX Runtime Web. Inference happens in a Web Worker so the video stays smooth while the model is thinking.
 
-## Expanding the ESLint configuration
+## stack
 
-If you are developing a production application, we recommend updating the configuration to enable type-aware lint rules:
+- React + TypeScript + Vite
+- onnxruntime-web (multi-threaded WASM, 8 threads)
+- YOLOv8s — 35 classes — ONNX FP32 — 45 MB
+- Shoe specialist — single class — 12 MB
+- Hosted on Vercel with COOP/COEP headers for SharedArrayBuffer
 
-```js
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
+## run locally
 
-      // Remove tseslint.configs.recommended and replace with this
-      tseslint.configs.recommendedTypeChecked,
-      // Alternatively, use this for stricter rules
-      tseslint.configs.strictTypeChecked,
-      // Optionally, add this for stylistic rules
-      tseslint.configs.stylisticTypeChecked,
-
-      // Other configs...
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
+```bash
+npm install
+npm run dev
 ```
 
-You can also install [eslint-plugin-react-x](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-x) and [eslint-plugin-react-dom](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-dom) for React-specific lint rules:
+## controls
 
-```js
-// eslint.config.js
-import reactX from 'eslint-plugin-react-x'
-import reactDom from 'eslint-plugin-react-dom'
+- **Start camera** — webcam preview + live detection
+- **Upload** — pick an image from disk
+- **Ctrl/Cmd + V** — paste an image from clipboard
+- **Confidence slider** — minimum score for a box to render
+- **Backend** — auto WebGPU on supported hardware, otherwise multi-threaded WASM
 
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
-      // Enable lint rules for React
-      reactX.configs['recommended-typescript'],
-      // Enable lint rules for React DOM
-      reactDom.configs.recommended,
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
-```
+## links
+
+- Source: [Rieltzx25/outfit-app](https://github.com/Rieltzx25/outfit-app)
+- Model: [Rieltzx25/outfit-detection-yolov8](https://github.com/Rieltzx25/outfit-detection-yolov8)
