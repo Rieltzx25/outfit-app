@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { loadModel, detect, OUTFIT_LABELS, OUTFIT_COLORS, OUTFIT_GROUPS, ACTIVE_BACKEND, type Box } from './inference'
+import { loadModel, detect, OUTFIT_LABELS, OUTFIT_COLORS, OUTFIT_GROUPS, type Box } from './inference'
 
 type Status = 'idle' | 'loading' | 'live' | 'paused' | 'error'
 
@@ -18,6 +18,7 @@ export default function App() {
   const [latency, setLatency] = useState(0)
   const [confThreshold, setConfThreshold] = useState(0.35)
   const [facing, setFacing] = useState<'user' | 'environment'>('environment')
+  const [backend, setBackend] = useState<'webgpu' | 'wasm'>('wasm')
   const confRef = useRef(0.35)
   useEffect(() => { confRef.current = confThreshold }, [confThreshold])
 
@@ -39,7 +40,8 @@ export default function App() {
     try {
       setStatus('loading')
       setStatusMsg('loading model')
-      await loadModel(m => setStatusMsg(m.toLowerCase()))
+      const be = await loadModel(m => setStatusMsg(m.toLowerCase()))
+      setBackend(be)
 
       setStatusMsg('requesting camera')
       // Mark as 'live' before awaiting metadata so the <video> becomes visible —
@@ -205,7 +207,8 @@ export default function App() {
     try {
       setStatus('loading')
       setStatusMsg('loading model')
-      await loadModel(m => setStatusMsg(m.toLowerCase()))
+      const be = await loadModel(m => setStatusMsg(m.toLowerCase()))
+      setBackend(be)
       stopAll()
       const url = URL.createObjectURL(f)
       const img = new Image()
@@ -375,7 +378,7 @@ export default function App() {
               </div>
               <div className="metric">
                 <div className="label">Backend</div>
-                <div className="value" style={{ fontSize: 14 }}>{ACTIVE_BACKEND.toUpperCase()}</div>
+                <div className="value" style={{ fontSize: 14 }}>{backend.toUpperCase()}</div>
               </div>
             </div>
           </div>
