@@ -79,18 +79,26 @@ async function loadModel(post: (msg: string, pct?: number) => void) {
     getOrFetchModel(SPECIALIST_URL, SPECIALIST_BYTES, p => { specPct = p; updateOverall() }),
   ])
 
+  // WebGPU init can hang silently on some Chrome+laptop combos (driver/iGPU issues).
+  // Race it against a 4s timeout so we don't deadlock the loader; fall back to WASM.
+  const WEBGPU_INIT_TIMEOUT_MS = 4000
+
   const tryCreate = async (buf: ArrayBuffer, label: string) => {
-    if (hasWebGPU) {
+    if (hasWebGPU && activeBackend !== 'wasm') {
       try {
         post(`initializing ${label} (webgpu)…`, 99)
-        const s = await ort.InferenceSession.create(buf, {
+        const create = ort.InferenceSession.create(buf, {
           executionProviders: ['webgpu'],
           graphOptimizationLevel: 'all',
         })
+        const timeout = new Promise<never>((_, rej) => setTimeout(() => rej(new Error('webgpu init timeout')), WEBGPU_INIT_TIMEOUT_MS))
+        const s = await Promise.race([create, timeout])
         activeBackend = 'webgpu'
         return s
       } catch (e) {
-        console.warn(`webgpu init failed for ${label}, falling back to wasm:`, e)
+        console.warn(`webgpu init failed/timeout for ${label}, falling back to wasm:`, e)
+        // Lock to WASM for the rest of this load so we don't time out twice on the second model.
+        activeBackend = 'wasm'
       }
     }
     post(`initializing ${label} (wasm)…`, 99)
